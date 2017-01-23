@@ -2,6 +2,9 @@
   MSX Joystick from USBHIDJoystick PC
   modified by cloudree
 
+  2016.01.03 : FORCE_PULL_UP
+  2016.12.31 : support WACOM Intuos2 tablet for msx mouse
+  2016.12.18 : msx mouse support (can't use MD/X68K add-on)
   2016.12.11 : remove XBOX,PS3 (wireless)
   2016.10.16 : arduino 1.6.10 + USB host shield library 2.0 : circuit@home.org
   2016.07.30 : mouse support
@@ -9,6 +12,7 @@
     https://www.msx.org/wiki/Mouse/Trackball
     http://www.faq.msxnet.org/connector.html
     https://www.msx.org/forum/msx-talk/hardware/use-10eu-connect-modern-mouse-msx
+  2016.01.23 : keyboard (UP/DOWN/LEFT/RIGHT/SPACE/M,Alt)
 */
 
 /*
@@ -29,7 +33,10 @@
 
 // project setting
 #define ATMEL_328     // Uno, etc...
-// #define _DEBUG
+#define _DEBUG
+#define FORCE_PULL_UP
+
+#include "DEBUG.H"
 
 #include <hid.h>
 #include <hiduniversal.h>
@@ -64,70 +71,66 @@ const int PIN_X       = A2;    // X
 const int PIN_Y       = A1;    // Y
 const int PIN_Z       = A0;    // Z / R
 
-volatile int nJoyMouse = 0;      // 0 = undefined, 1 = JoyStick, 2 = Mouse
+volatile enum {
+  JMT_Undefined = 0,
+  JMT_Joystick,
+  JMT_Mouse,
+  JMT_Tablet
+} eJoyMouseTablet = JMT_Undefined;
 
 char x, y;
 char TimeOut = 40;
 long time;
 volatile char rx, ry, rz;
-volatile bool pressLeft, pressRight;
+volatile bool pressLeft, pressRight, pressCenter;
 
 volatile bool isUp, isDown, isLeft, isRight;
 volatile bool isA, isB, isC, isX, isY, isZ;
 volatile bool isStart, isSelect;
 
 // ----------------------------------
-#ifdef _DEBUG
-void DBG( String msg )
+void ProcessTablet( uint8_t len, uint8_t *buf)
 {
-  Serial.print( msg );
-}
-
-void DBG( byte data )
-{
-  Serial.print( data, HEX );
-  Serial.println( " " );
-}
-
-void DBGLN( String msg )
-{
-  Serial.println( msg );
-}
-
-void DBGLN( byte data )
-{
-  Serial.print( data, HEX );
-  Serial.println( " " );
-}
-
-void Dump( uint8_t len, uint8_t *buf)
-{
-  Serial.print("len = ");
-  Serial.println( len );
-  for (int i=0; i<len; i++ ) {
-    Serial.print( buf[i], HEX);
-    Serial.print( ", ");
+  if( eJoyMouseTablet != JMT_Undefined && eJoyMouseTablet != JMT_Tablet )
+    return;
+    
+  switch( len ) 
+  {
+  case 5:
+    if( buf[0] == 1 || buf[1] < 7 || buf[4] == 0 ) 
+    {
+      eJoyMouseTablet = JMT_Tablet;
+    }
+    if( eJoyMouseTablet == JMT_Tablet )
+    {
+      rx = (byte) buf[2];
+      ry = (byte) buf[3];
+      pressLeft = buf[1] & 1;     if ( pressLeft) DBGLN( "Left" );        // Push pen
+      pressRight = buf[1] & 4;    if ( pressRight) DBGLN( "Right" );      // lower sw
+      pressCenter = buf[1] & 2;   if ( pressCenter) DBGLN( "Center" );    // upper sw
+      DBG( "rx=" );
+      DBG( rx );
+      DBG( " ry=" );
+      DBGLN( ry );
+    }
+    break;
   }
-  Serial.println( "\n");
 }
-#else
-# define DBG(a)
-# define DBGLN(a)
-# define Dump(a,b)
-#endif
-
-// ----------------------------------
 
 void ProcessMouse( uint8_t len, uint8_t *buf)
 {
-  if( nJoyMouse == 1 )
+  if( eJoyMouseTablet != JMT_Undefined && eJoyMouseTablet != JMT_Mouse )
     return;
-  switch( len ) {
+    
+  switch( len ) 
+  {    
   case 3:
-    if( buf[0] == 1 || buf[0] == 2 || buf[0] == 3 || buf[2] > 0x10 ) {
-      nJoyMouse = 2;
+    if( buf[0] == 1 || buf[0] == 2 || buf[0] == 3 || buf[2] > 0x10 ) 
+    {
+      eJoyMouseTablet = JMT_Mouse;
     }
-    if( nJoyMouse == 2 ) {
+    if( eJoyMouseTablet == JMT_Mouse ) 
+    {
       rx = (byte) buf[1];
       if ( rx ) {
         DBG( "rx=" );
@@ -142,23 +145,29 @@ void ProcessMouse( uint8_t len, uint8_t *buf)
       pressRight = buf[0] & 2;    if ( pressRight) DBGLN( "Right" );
     }    
     break;
+    
   case 4:
-    if( buf[0] == 1 || buf[0] == 2 || buf[0] == 3 || buf[2] > 0x10 || buf[3] == 0xff ) {
-      nJoyMouse = 2;
+    if( buf[0] == 1 || buf[0] == 2 || buf[0] == 3 || buf[2] > 0x10 || buf[3] == 0xff ) 
+    {
+      eJoyMouseTablet = JMT_Mouse;
     }
-    if( nJoyMouse == 2 ) {
+    if( eJoyMouseTablet == JMT_Mouse ) 
+    {
       rx = (byte) buf[1];
-      if ( rx ) {
+      if ( rx ) 
+      {
         DBG( "rx=" );
         DBGLN( rx );
       }
       ry = (byte) buf[2];
-      if ( ry ) {
+      if ( ry ) 
+      {
         DBG( "ry=" );
         DBGLN( ry );
       }
       rz = (byte) buf[3];
-      if ( rz ) {
+      if ( rz ) 
+      {
         DBG( "rz=" );
         DBGLN( rz );
       }
@@ -171,18 +180,18 @@ void ProcessMouse( uint8_t len, uint8_t *buf)
 
 void ProcessJoyStick( uint8_t len, uint8_t *buf)
 {
-  if( nJoyMouse == 2 )
+  if( eJoyMouseTablet != JMT_Undefined && eJoyMouseTablet != JMT_Joystick )
     return;
-  if( len > 4 ) 
-    nJoyMouse = 1;
     
   switch( len ) 
   {
   case 4 :
-    if( buf[0] == 0xff || buf[0] == 0x80 || buf[1] == 0x80 ) {
-      nJoyMouse = 1;
+    if( buf[0] == 0xff || buf[0] == 0x80 || buf[1] == 0x80 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
     }
-    if( nJoyMouse == 1 ) {
+    if( eJoyMouseTablet == JMT_Joystick ) 
+    {
       // painkiller rotary joystick
       DBG("PK-Rotary ");
       isUp =    ( buf[1] == 0x00 );     if ( isUp ) DBGLN("UP");
@@ -201,7 +210,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
     break;
     
   case 7 :
-    if ( (buf[2] & 0xf0) == 0xf0 && buf[5] == 0x7f && buf[6] == 0x7f ) {
+    if ( (buf[2] & 0xf0) == 0xf0 && buf[5] == 0x7f && buf[6] == 0x7f ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // PS2 to USB Conveter (Dual Player) : not analog
       if ( buf[0] != 1 ) return;
       // player 1
@@ -219,7 +231,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
       isStart = ( buf[2] & 0x01 );    if ( isStart ) DBGLN("Start");
       isSelect = ( buf[2] & 0x02 );   if ( isSelect ) DBGLN("Select");
     }
-    else if ( len == 7 && buf[2] == 0x80 && buf[3] == 0x80 && buf[6] == 0 ) {
+    else if ( buf[2] == 0x80 && buf[3] == 0x80 && buf[6] == 0 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       DBG("8BITDO ");
       isUp =    ( buf[1] == 0x00 );     if ( isUp ) DBGLN("UP");
       isRight = ( buf[0] == 0xff );     if ( isRight ) DBGLN("RT");
@@ -237,7 +252,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
     break;
     
   case 8 :
-    if ( buf[0] == 0x01 && buf[1] == 0x7F ) {
+    if ( buf[0] == 0x01 && buf[1] == 0x7F ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // PS2 to USB Converter (Black Simple, One player)
       DBG("PS2Single ");
       isUp =    ( buf[4] == 0x00 );     if ( isUp ) DBGLN("UP");
@@ -253,7 +271,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
       isStart = ( buf[6] & 0x20 );    if ( isStart ) DBGLN("Start");
       isSelect = ( buf[6] & 0x10 );   if ( isSelect ) DBGLN("Select");
     }
-    else if ( buf[2] == 0x80 && buf[3] == 0x80 && buf[4] == 0x80 ) {
+    else if ( buf[2] == 0x80 && buf[3] == 0x80 && buf[4] == 0x80 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // NES copy USB pad
       DBG("NES-USB ");
       isUp =    ( buf[1] == 0 );      if ( isUp ) DBGLN("UP");
@@ -269,7 +290,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
       isStart = ( buf[6] & 0x20 );    if ( isStart ) DBGLN("Start");
       isSelect = ( buf[6] & 0x10 );   if ( isSelect ) DBGLN("Select");
     }
-    else if ( buf[0] == 0x1 && buf[1] == 0x80 && buf[2] == 0x80 ) {
+    else if ( buf[0] == 0x1 && buf[1] == 0x80 && buf[2] == 0x80 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // NES copy USB pad 2
       DBG("NES-USB2 ");
       isUp =    ( buf[4] == 0 );      if ( isUp ) DBGLN("UP");
@@ -285,10 +309,38 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
       isStart = ( buf[6] & 0x20 );    if ( isStart ) DBGLN("Start");
       isSelect = ( buf[6] & 0x10 );   if ( isSelect ) DBGLN("Select");
     }
+    else if ( buf[1] == 0 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
+      // USB Keyboard
+      DBG("USB keyboard");
+
+      isUp = isDown = isLeft = isRight = isA = isB = isC = isX = isY = isZ = isStart = isSelect = false;
+      for( int i=2; i<8; i++ ) {
+        if ( buf[i] == 0x52 ) { isUp = true; DBGLN("UP"); }
+        if ( buf[i] == 0x51 ) { isDown = true;  DBGLN("DN"); }
+        if ( buf[i] == 0x50 ) { isLeft = true;  DBGLN("LT"); }
+        if ( buf[i] == 0x4f ) { isRight = true; DBGLN("RT"); }
+        if ( buf[i] == 0x2c || buf[i] == 0x1d ) { isA = true; DBGLN("A"); }     // space, z, ctrl
+        if ( buf[i] == 0x1b || buf[i] == 0x10 ) { isB = true; DBGLN("B"); }     // m, x, alt
+        if ( buf[i] == 0x06 ) { isC = true; DBGLN("C"); }             // c
+        if ( buf[i] == 0x04 ) { isX = true; DBGLN("X"); }             // a
+        if ( buf[i] == 0x16 ) { isY = true; DBGLN("Y"); }             // s
+        if ( buf[i] == 0x07 ) { isZ = true; DBGLN("Z"); }             // d
+        if ( buf[i] == 0x14 ) { isStart = true; DBGLN("Start"); }     // q
+        if ( buf[i] == 0x1a ) { isSelect = true; DBGLN("Select"); }   // w
+      }
+      if ( buf[0] == 0x01 ) { isA = true; DBGLN("A"); }     // ctrl
+      if ( buf[0] == 0x04 ) { isB = true; DBGLN("B"); }     // alt
+    }
     break;
     
   case 20 :
-    if ( buf[0] == 0 && buf[1] == 0x14 ) {
+    if ( buf[0] == 0 && buf[1] == 0x14 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // Wing Wireless
       DBG("Wing ");
       isUp =    ( (int8_t)buf[9] > 0 ) || ( buf[2] & 0x01 );    if ( isUp ) DBGLN("UP");
@@ -307,7 +359,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
     break;
     
   case 27 :
-    if ( buf[3] == 0x80 && buf[4] == 0x80 && buf[5] == 0x80 && buf[6] == 0x80 ) {
+    if ( buf[3] == 0x80 && buf[4] == 0x80 && buf[5] == 0x80 && buf[6] == 0x80 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // PS3 : Joytron Pae-Wang, Hori Fighting Stick Mini
       DBG("PS3 ");
       isUp =    ( buf[2] == 0x07 || buf[2] == 0x00 || buf[2] == 0x01 );    if ( isUp ) DBGLN("UP");
@@ -328,7 +383,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
     break;
 
   case 64 :
-    if ( buf[1] == 0x80 && buf[2] == 0x80 && buf[3] == 0x80 && buf[4] == 0x80 ) {
+    if ( buf[1] == 0x80 && buf[2] == 0x80 && buf[3] == 0x80 && buf[4] == 0x80 ) 
+    {
+      eJoyMouseTablet = JMT_Joystick;
+
       // PS4 : Hori Fighting Stick Mini
       DBG("PS4 ");
       int st = buf[5] & 0xf;
@@ -348,7 +406,10 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
     break;
   }
     
-  if ( (buf[3] & 0xF0) == 0xF0 ) {
+  if ( (buf[3] & 0xF0) == 0xF0 ) 
+  {
+    eJoyMouseTablet = JMT_Joystick;
+
     // Dahoon DHU-3300
     DBG("DHU-3300 ");
     isUp =    ( buf[1] == 0 );        if ( isUp ) DBGLN("UP");
@@ -366,12 +427,14 @@ void ProcessJoyStick( uint8_t len, uint8_t *buf)
   }
 }
 
-class MyReportParser : public HIDReportParser {
+class MyReportParser : public HIDReportParser 
+{
   public:
     MyReportParser() { }
     virtual void Parse(HID *hid, bool is_rpt_id, uint8_t len, uint8_t *buf)
     {
       Dump( len, buf );
+      ProcessTablet( len, buf );
       ProcessMouse( len, buf );
       ProcessJoyStick( len, buf );
     }
@@ -404,6 +467,33 @@ void setup()
   if ( !Hid.SetReportParser(0, &ReportParser) )
     DBGLN( "SetReportParser Error" );
 
+#ifdef FORCE_PULL_UP
+  pinMode( PIN_UP,     OUTPUT);
+  pinMode( PIN_DOWN,   OUTPUT);
+  pinMode( PIN_LEFT,   OUTPUT);
+  pinMode( PIN_RIGHT,  OUTPUT);
+  pinMode( PIN_START,  OUTPUT);
+  pinMode( PIN_SELECT, OUTPUT);
+  pinMode( PIN_A,      OUTPUT);
+  pinMode( PIN_B,      OUTPUT);
+  pinMode( PIN_C,      OUTPUT);
+  pinMode( PIN_X,      OUTPUT);
+  pinMode( PIN_Y,      OUTPUT);
+  pinMode( PIN_Z,      OUTPUT);
+
+  // initialize
+  digitalWrite( PIN_UP,    HIGH);
+  digitalWrite( PIN_DOWN,  HIGH);
+  digitalWrite( PIN_LEFT,  HIGH);
+  digitalWrite( PIN_RIGHT, HIGH);
+  digitalWrite( PIN_START, HIGH);
+  digitalWrite( PIN_A,     HIGH);
+  digitalWrite( PIN_B,     HIGH);
+  digitalWrite( PIN_C,     HIGH);
+  digitalWrite( PIN_X,     HIGH);
+  digitalWrite( PIN_Y,     HIGH);
+  digitalWrite( PIN_Z,     HIGH);
+#else
   // msx pins are not HIGH / LOW input,
   // they are NOT_CONNECTED(3state, internaly pull-upped) / LOW
 
@@ -432,8 +522,9 @@ void setup()
   digitalWrite( PIN_X,     LOW);
   digitalWrite( PIN_Y,     LOW);
   digitalWrite( PIN_Z,     LOW);
+#endif
 
-  nJoyMouse = 0;
+  eJoyMouseTablet = JMT_Undefined;
   x = y = rx = ry = rz = 0;
   TimeOut = 40;
   pressLeft = pressRight = false;
@@ -490,8 +581,23 @@ void loop()
 {
   Usb.Task();
 
-  switch( nJoyMouse ) {
-  case 1: // JoyStick
+  switch( eJoyMouseTablet ) {
+  case JMT_Joystick:
+#ifdef FORCE_PULL_UP
+    digitalWrite( PIN_UP, isUp ? LOW : HIGH);
+    digitalWrite( PIN_DOWN, isDown ? LOW : HIGH);
+    digitalWrite( PIN_LEFT, isLeft ? LOW : HIGH);
+    digitalWrite( PIN_RIGHT, isRight ? LOW : HIGH);
+    digitalWrite( PIN_START, isStart ? LOW : HIGH);
+    digitalWrite( PIN_SELECT, isSelect ? LOW : HIGH);
+  
+    digitalWrite( PIN_A, isA ? LOW : HIGH);
+    digitalWrite( PIN_B, isB ? LOW : HIGH);
+    digitalWrite( PIN_C, isC ? LOW : HIGH);
+    digitalWrite( PIN_X, isX ? LOW : HIGH);
+    digitalWrite( PIN_Y, isY ? LOW : HIGH);
+    digitalWrite( PIN_Z, isZ ? LOW : HIGH);
+#else  
     pinMode( PIN_UP, isUp ? OUTPUT : INPUT);
     pinMode( PIN_DOWN, isDown ? OUTPUT : INPUT);
     pinMode( PIN_LEFT, isLeft ? OUTPUT : INPUT);
@@ -505,9 +611,11 @@ void loop()
     pinMode( PIN_X, isX ? OUTPUT : INPUT);
     pinMode( PIN_Y, isY ? OUTPUT : INPUT);
     pinMode( PIN_Z, isZ ? OUTPUT : INPUT);
+#endif
     break;
     
-  case 2: // Mouse
+  case JMT_Mouse:
+  case JMT_Tablet:
     // move 
     x = x + rx;
     y = y + ry;
@@ -516,6 +624,7 @@ void loop()
     // buttons
     if( pressLeft )  pinMode( PIN_A,OUTPUT ); else pinMode( PIN_A, INPUT );
     if( pressRight ) pinMode( PIN_B,OUTPUT ); else pinMode( PIN_B, INPUT );
+    if( pressCenter) pinMode( PIN_C,OUTPUT ); else pinMode( PIN_C, INPUT );
 
     // send to msx
     time = millis() + 40;
